@@ -39,6 +39,7 @@
           @change="changeLang"
       >
         <el-option label="中文" value="zh" @pointerdown.prevent.stop="changeLang('zh')"/>
+        <el-option label="繁體中文" value="zh_tw" @pointerdown.prevent.stop="changeLang('zh_tw')"/>
         <el-option label="English" value="en" @pointerdown.prevent.stop="changeLang('en')"/>
       </el-select>
     </div>

@@ -126,7 +126,8 @@
       </div>
     </div>
     <el-dialog top="10vh" v-model="showContacts" @closed="clearSelectContact" :title="t('recentContacts')">
-      <el-table ref="contactsTabRef" row-key="email" :data="contacts" style="height: 445px">
+      <el-table ref="contactsTabRef" row-key="email" :data="contacts" style="height: 445px"
+                @row-click="(row) => contactsTabRef.value.toggleRowSelection(row)">
         <el-table-column type="selection" width="32" />
         <el-table-column property="email" :label="t('emailAccount')" >
           <template #default="props">
@@ -237,7 +238,7 @@ function openContacts(field = 'receive') {
   nextTick(() => {
     form[targetField].forEach(item => {
       if (writerStore.sendRecipientRecord.includes(item)) {
-        contactsTabRef.value.toggleRowSelection({email: item});
+        contactsTabRef.value?.toggleRowSelection?.({email: item});
       }
     })
   })
@@ -264,15 +265,11 @@ function chooseContact() {
     }
   })
 
-  form[targetField] = form[targetField].filter(item => {
-    return contactList.includes(item) || !writerStore.sendRecipientRecord.includes(item);
-  });
-
   showContacts.value = false
 }
 
 function clearSelectContact() {
-  contactsTabRef.value.clearSelection();
+  contactsTabRef.value?.clearSelection?.();
 }
 
 function onSelectChange(value, field) {

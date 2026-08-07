@@ -206,6 +206,10 @@ const selectRefs = {
 let selectStatus = false
 let selectField = 'receive'
 let targetField = 'receive'
+const formFieldMap = {receive: 'receiveEmail', cc: 'cc', bcc: 'bcc'}
+function getFormField(field) {
+  return formFieldMap[field] || field
+}
 const backReply = reactive({
   receiveEmail: [],
   subject: '',
@@ -235,13 +239,6 @@ const contacts = computed(() => writerStore.sendRecipientRecord.map(item => ({em
 function openContacts(field = 'receive') {
   targetField = field
   showContacts.value = true
-  nextTick(() => {
-    form[targetField].forEach(item => {
-      if (writerStore.sendRecipientRecord.includes(item)) {
-        contactsTabRef.value?.toggleRowSelection?.({email: item});
-      }
-    })
-  })
 }
 
 function deleteContact() {
@@ -250,22 +247,23 @@ function deleteContact() {
     cancelButtonText: t('cancel'),
     type: 'warning'
   }).then(() => {
-    const contactList = contactsTabRef.value.getSelectionRows().map(item => item.email);
-    form[targetField] = form[targetField].filter(item => !contactList.includes(item));
+    const contactList = contactsTabRef.value?.getSelectionRows?.()?.map(item => item.email) ?? [];
+    form[getFormField(targetField)] = form[getFormField(targetField)].filter(item => !contactList.includes(item));
     writerStore.sendRecipientRecord = writerStore.sendRecipientRecord.filter(item => !contactList.includes(item));
   })
 }
 
 function chooseContact() {
 
-  const contactList = contactsTabRef.value.getSelectionRows().map(item => item.email);
+  showContacts.value = false
+
+  const contactList = contactsTabRef.value?.getSelectionRows?.()?.map(item => item.email) ?? [];
+  const target = getFormField(targetField)
   contactList.forEach(item => {
-    if (!form[targetField].includes(item)) {
-      form[targetField].push(item);
+    if (!form[target].includes(item)) {
+      form[target].push(item);
     }
   })
-
-  showContacts.value = false
 }
 
 function clearSelectContact() {
@@ -273,7 +271,7 @@ function clearSelectContact() {
 }
 
 function onSelectChange(value, field) {
-  form[field].push(value)
+  form[getFormField(field)].push(value)
 }
 
 function onSelectVisible(status, field) {
@@ -287,7 +285,7 @@ const openSelect = (field) => {
 
 function onInput(value, field) {
 
-  selectRecipientList.value = writerStore.sendRecipientRecord.filter(item => value && !form[field].includes(item) && item.startsWith(value)).slice(0, 10);
+  selectRecipientList.value = writerStore.sendRecipientRecord.filter(item => value && !form[getFormField(field)].includes(item) && item.startsWith(value)).slice(0, 10);
 
   if (!selectStatus && selectRecipientList.value.length > 0) {
     openSelect(field)
@@ -305,12 +303,12 @@ function onAddTag(val, field) {
       val.split(/[,，]/).map(item => item.trim()).filter(item => item)
   ));
 
-  form[field].splice(form[field].length - 1, 1)
+  form[getFormField(field)].splice(form[getFormField(field)].length - 1, 1)
 
   let has = false
   emails.forEach(email => {
-    if (isEmail(email) && !form[field].includes(email)) {
-      form[field].push(email)
+    if (isEmail(email) && !form[getFormField(field)].includes(email)) {
+      form[getFormField(field)].push(email)
       has = true
     }
   })

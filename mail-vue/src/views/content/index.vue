@@ -8,6 +8,7 @@
         <Icon class="icon" @click="changeStar" v-else icon="solar:star-line-duotone" width="18" height="18"/>
       </span>
       <Icon class="icon" v-if="emailStore.contentData.showReply" v-perm="'email:send'"  @click="openReply" icon="la:reply" width="21" height="21" />
+      <Icon class="icon" v-if="emailStore.contentData.showReply" v-perm="'email:send'"  @click="openReplyAll" icon="la:reply-all" width="21" height="21" />
       <Icon class="icon" v-if="emailStore.contentData.showReply" v-perm="'email:send'"  @click="openForward" icon="iconoir:arrow-up-right" width="20" height="20" />
     </div>
     <div></div>
@@ -26,6 +27,8 @@
                 </div>
               </div>
               <div class="receive"><span class="source">{{$t('recipient')}}</span><span class="receive-email">{{  formateReceive(email.recipient) }}</span></div>
+              <div class="receive" v-if="formateRecipients(email.cc)"><span class="source">{{$t('cc')}}</span><span class="receive-email">{{ formateRecipients(email.cc) }}</span></div>
+              <div class="receive" v-if="formateRecipients(email.bcc)"><span class="source">{{$t('bcc')}}</span><span class="receive-email">{{ formateRecipients(email.bcc) }}</span></div>
               <div class="date">
                 <div>{{ formatDetailDate(email.createTime) }}</div>
               </div>
@@ -122,6 +125,10 @@ function openReply() {
   uiStore.writerRef.openReply(email)
 }
 
+function openReplyAll() {
+  uiStore.writerRef.openReplyAll(email)
+}
+
 function openForward() {
   uiStore.writerRef.openForward(email)
 }
@@ -151,6 +158,17 @@ function isImage(filename) {
 function formateReceive(recipient) {
   recipient = JSON.parse(recipient)
   return recipient.map(item => item.address).join(', ')
+}
+
+function formateRecipients(recipient) {
+  if (!recipient) return ''
+  try {
+    const parsed = JSON.parse(recipient)
+    if (!Array.isArray(parsed)) return ''
+    return parsed.map(item => typeof item === 'string' ? item : item.address).filter(Boolean).join(', ')
+  } catch (e) {
+    return ''
+  }
 }
 
 function changeStar() {

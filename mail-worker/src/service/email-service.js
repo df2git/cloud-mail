@@ -233,13 +233,17 @@ const emailService = {
 		const resendToken = resendTokens[domain];
 		const smtp2goToken = smtp2goTokens?.[domain];
 		const useCloudflareEmail = !!c.env.email;
+		const sendProviderType = sendProvider || (useCloudflareEmail ? 'cloudflare' : 'resend');
 
 		//如果接收方存在站外邮箱，又没有发信服务
-		if (!useCloudflareEmail && !allInternal) {
-			if (sendProvider === 'smtp2go' && !smtp2goToken) {
+		if (!allInternal) {
+			if (sendProviderType === 'cloudflare' && !useCloudflareEmail) {
 				throw new BizError(t('noSendProvider'));
 			}
-			if (sendProvider !== 'smtp2go' && !resendToken) {
+			if (sendProviderType === 'smtp2go' && !smtp2goToken) {
+				throw new BizError(t('noSendProvider'));
+			}
+			if (sendProviderType === 'resend' && !resendToken) {
 				throw new BizError(t('noSendProvider'));
 			}
 		}
@@ -266,10 +270,10 @@ const emailService = {
 
 		let sendResult = {};
 
-		//存在站外邮箱时，如果配置了 Cloudflare Email Service 就优先使用，否则使用设置的发信服务（Resend 或 SMTP2GO）
+		//存在站外邮箱时，按设置的发信服务发送（Cloudflare Email / SMTP2GO / Resend）
 		if (!allInternal) {
 
-			if (useCloudflareEmail) {
+			if (sendProviderType === 'cloudflare') {
 				sendResult = await this.sendByCloudflareEmail(c, {
 					name,
 					accountEmail: accountRow.email,
@@ -281,7 +285,7 @@ const emailService = {
 					sendType,
 					messageId: emailRow.messageId
 				});
-			} else if (sendProvider === 'smtp2go') {
+			} else if (sendProviderType === 'smtp2go') {
 				sendResult = await this.sendBySmtp2go(smtp2goToken, {
 					name,
 					accountEmail: accountRow.email,

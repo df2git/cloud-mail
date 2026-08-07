@@ -126,8 +126,7 @@
       </div>
     </div>
     <el-dialog top="10vh" v-model="showContacts" @closed="clearSelectContact" :title="t('recentContacts')">
-      <el-table ref="contactsTabRef" row-key="email" :data="contacts" style="height: 445px"
-                @row-click="(row) => contactsTabRef.value.toggleRowSelection(row)">
+      <el-table ref="contactsTabRef" row-key="email" :data="contacts" style="height: 445px">
         <el-table-column type="selection" width="32" />
         <el-table-column property="email" :label="t('emailAccount')" >
           <template #default="props">

@@ -5,9 +5,10 @@ import en from './en.js'
 import app from '../hono/hono';
 
 app.use('*', async (c, next) => {
-	const acceptLang = c.req.header('accept-language') || ''
+		const acceptLang = (c.req.header('accept-language') || '').toLowerCase()
 	let lang = 'zh'
-	if (acceptLang.startsWith('zh-TW') || acceptLang.startsWith('zh-HK') || acceptLang.startsWith('zh-MO')) {
+	if (acceptLang.startsWith('zh-tw') || acceptLang.startsWith('zh-hk') || acceptLang.startsWith('zh-mo')
+		|| acceptLang.startsWith('zh_tw') || acceptLang.startsWith('zh_hk') || acceptLang.startsWith('zh_mo')) {
 		lang = 'zh_tw'
 	} else if (acceptLang.startsWith('zh')) {
 		lang = 'zh'

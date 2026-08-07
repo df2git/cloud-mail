@@ -164,7 +164,7 @@ const emailService = {
 			attachments = [] //附件
 		} = params;
 
-		const { resendTokens, r2Domain, send, domainList } = await settingService.query(c);
+		const { resendTokens, smtp2goTokens, sendProvider, r2Domain, send, domainList } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
 
@@ -231,11 +231,17 @@ const emailService = {
 
 		const domain = emailUtils.getDomain(accountRow.email);
 		const resendToken = resendTokens[domain];
+		const smtp2goToken = smtp2goTokens?.[domain];
 		const useCloudflareEmail = !!c.env.email;
 
 		//如果接收方存在站外邮箱，又没有发信服务
-		if (!useCloudflareEmail && !resendToken && !allInternal) {
-			throw new BizError(t('noSendProvider'));
+		if (!useCloudflareEmail && !allInternal) {
+			if (sendProvider === 'smtp2go' && !smtp2goToken) {
+				throw new BizError(t('noSendProvider'));
+			}
+			if (sendProvider !== 'smtp2go' && !resendToken) {
+				throw new BizError(t('noSendProvider'));
+			}
 		}
 
 		//没有发件人名字自动截取
@@ -260,11 +266,23 @@ const emailService = {
 
 		let sendResult = {};
 
-		//存在站外邮箱时，如果配置了 Cloudflare Email Service 就优先使用，否则使用 Resend
+		//存在站外邮箱时，如果配置了 Cloudflare Email Service 就优先使用，否则使用设置的发信服务（Resend 或 SMTP2GO）
 		if (!allInternal) {
 
 			if (useCloudflareEmail) {
 				sendResult = await this.sendByCloudflareEmail(c, {
+					name,
+					accountEmail: accountRow.email,
+					receiveEmail,
+					subject,
+					text,
+					html,
+					attachments: [...imageDataList, ...attachments],
+					sendType,
+					messageId: emailRow.messageId
+				});
+			} else if (sendProvider === 'smtp2go') {
+				sendResult = await this.sendBySmtp2go(smtp2goToken, {
 					name,
 					accountEmail: accountRow.email,
 					receiveEmail,
@@ -431,6 +449,111 @@ const emailService = {
 		}
 
 		return await resend.emails.send(sendForm);
+	},
+
+	async sendBySmtp2go(apiKey, params) {
+		const sendForm = {
+			api_key: apiKey,
+			sender: `${params.name} <${params.accountEmail}>`,
+			to: [...params.receiveEmail],
+			subject: params.subject,
+			attachments: await this.toSmtp2goAttachments(params.attachments),
+			inlines: await this.toSmtp2goInlines(params.attachments)
+		};
+
+		if (params.text) {
+			sendForm.text_body = params.text;
+		}
+
+		if (params.html) {
+			sendForm.html_body = params.html;
+		}
+
+		if (params.sendType === 'reply') {
+			sendForm.custom_headers = [
+				{ header: 'in-reply-to', value: params.messageId },
+				{ header: 'references', value: params.messageId }
+			];
+		}
+
+		if (sendForm.attachments.length === 0) {
+			delete sendForm.attachments;
+		}
+
+		if (sendForm.inlines.length === 0) {
+			delete sendForm.inlines;
+		}
+
+		let response;
+		try {
+			response = await fetch('https://api.smtp2go.com/v3/email/send', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Accept': 'application/json'
+				},
+				body: JSON.stringify(sendForm)
+			});
+		} catch (e) {
+			return { data: null, error: { message: e.message } };
+		}
+
+		const json = await response.json();
+
+		if (!response.ok) {
+			return { data: null, error: { message: json?.data?.error || `SMTP2GO error: ${response.status}` } };
+		}
+
+		if (json?.data?.error) {
+			return { data: null, error: { message: json.data.error } };
+		}
+
+		if (json?.data?.failed) {
+			const failures = (json.data.failures || [])
+				.map(failure => failure?.error || failure?.message || JSON.stringify(failure))
+				.filter(Boolean);
+			return { data: null, error: { message: failures.join('; ') || 'SMTP2GO send failed' } };
+		}
+
+		return { data: { id: json.data.email_id }, error: null };
+	},
+
+	async toSmtp2goAttachments(attachments = []) {
+		const result = [];
+
+		for (const attachment of attachments) {
+			const content = await this.toAttachmentBase64(attachment);
+			if (!content || attachment.contentId) {
+				continue;
+			}
+
+			result.push({
+				filename: attachment.filename,
+				fileblob: content,
+				mimetype: attachment.mimeType || attachment.contentType || attachment.type || 'application/octet-stream'
+			});
+		}
+
+		return result;
+	},
+
+	async toSmtp2goInlines(attachments = []) {
+		const result = [];
+
+		for (const attachment of attachments) {
+			const content = await this.toAttachmentBase64(attachment);
+			if (!content || !attachment.contentId) {
+				continue;
+			}
+
+			result.push({
+				filename: attachment.contentId.replace(/^<|>$/g, ''),
+				fileblob: content,
+				mimetype: attachment.mimeType || attachment.contentType || attachment.type || 'application/octet-stream'
+			});
+		}
+
+		return result;
 	},
 
 	async toCloudflareAttachments(attachments) {

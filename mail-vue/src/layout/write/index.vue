@@ -791,7 +791,7 @@ function close() {
     .container {
       height: 100%;
       display: grid;
-      grid-template-rows: auto auto 1fr auto;
+      grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
       gap: 15px;
 
       .item-title {

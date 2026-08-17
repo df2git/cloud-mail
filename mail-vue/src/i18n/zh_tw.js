@@ -140,6 +140,8 @@ const zh = {
     websiteSetting: '網站設置',
     websiteReg: '用戶註冊',
     loginDomain: '隱藏登錄域名',
+    syncDelete: '同步刪除',
+    syncDeleteDesc: '開啟後收件箱和郵箱不再假刪',
     multipleEmail: '多號模式',
     multipleEmailDesc: '開啟後賬號欄出現一個用戶可以添加多個郵箱',
     customization: '個性化設置',

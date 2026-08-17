@@ -10,7 +10,7 @@ let http = axios.create({
 http.interceptors.request.use(config => {
     const { lang } = useSettingStore();
     config.headers.Authorization = `${localStorage.getItem('token')}`
-    config.headers['accept-language'] = lang
+    config.headers['accept-language'] = lang === 'zh_tw' ? 'zh-TW' : lang
     return config
 })
 

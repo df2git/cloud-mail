@@ -1,12 +1,13 @@
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
+import 'dayjs/locale/zh-tw'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
 import {useSettingStore} from "@/store/setting.js";
 const settingStore = useSettingStore();
 dayjs.extend(utc)
 dayjs.extend(timezone)
-dayjs.locale(settingStore.lang === 'en' ? 'en' : 'zh-cn')
+dayjs.locale(settingStore.lang === 'en' ? 'en' : settingStore.lang === 'zh_tw' ? 'zh-tw' : 'zh-cn')
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export function fromNow(date) {
@@ -36,10 +37,11 @@ export function fromNow(date) {
 
     } else {
 
+        const tw = settingStore.lang === 'zh_tw'
         if (isToday) {
-            if (diffSeconds < 60) return `几秒前`;
-            if (diffMinutes < 60) return `${diffMinutes}分钟前`;
-            if (diffHours >= 1 && diffHours < 2) return '1小时前';
+            if (diffSeconds < 60) return tw ? `幾秒前` : `几秒前`;
+            if (diffMinutes < 60) return tw ? `${diffMinutes}分鐘前` : `${diffMinutes}分钟前`;
+            if (diffHours >= 1 && diffHours < 2) return tw ? '1小時前' : '1小时前';
             return d.format('HH:mm');
         }
         else if (now.subtract(1, 'day').isSame(d, 'day')) {

@@ -6,11 +6,6 @@ const resendService = {
 
 	async webhooks(c, body) {
 
-		//SMTP2GO webhook
-		if (body.event) {
-			return this.smtp2goWebhooks(c, body);
-		}
-
 		const params = {
 			resendEmailId: body.data.email_id,
 			status: emailConst.status.SENT
@@ -41,40 +36,6 @@ const resendService = {
 		if (body.type === 'email.failed') {
 			params.status = emailConst.status.FAILED
 			params.message = body.data.failed.reason
-		}
-
-		const emailRow = await emailService.updateEmailStatus(c, params)
-
-		if (!emailRow) {
-			throw new BizError('更新邮件状态记录失败');
-		}
-
-	},
-
-	async smtp2goWebhooks(c, body) {
-
-		const params = {
-			resendEmailId: body.email_id,
-			status: emailConst.status.SENT
-		}
-
-		if (body.event === 'delivered') {
-			params.status = emailConst.status.DELIVERED
-			params.message = null
-		}
-
-		if (body.event === 'spam') {
-			params.status = emailConst.status.COMPLAINED
-			params.message = null
-		}
-
-		if (body.event === 'bounce') {
-			params.status = emailConst.status.BOUNCED
-			params.message = body.context || null
-		}
-
-		if (params.status === emailConst.status.SENT) {
-			return;
 		}
 
 		const emailRow = await emailService.updateEmailStatus(c, params)

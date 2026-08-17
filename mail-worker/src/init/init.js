@@ -36,10 +36,7 @@ const dbInit = {
 
 	async v3_1DB(c) {
 		try {
-			await c.env.db.batch([
-				c.env.db.prepare(`ALTER TABLE setting ADD COLUMN send_provider TEXT NOT NULL DEFAULT 'resend';`),
-				c.env.db.prepare(`ALTER TABLE setting ADD COLUMN smtp2go_tokens TEXT NOT NULL DEFAULT '{}';`)
-			]);
+			await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN sync_delete INTEGER NOT NULL DEFAULT 0;`).run();
 		} catch (e) {
 			console.warn(`跳过字段：${e.message}`);
 		}

@@ -66,6 +66,13 @@ const zh = {
 	notAdmin: '輸入的郵箱不是管理員郵箱',
 	emailExistDatabase: '有郵箱已存在數據庫中',
 	notConfigOss: '對象存儲未配置',
+	emptyAccountId: 'accountId不能為空',
+	notOwner: '只能在自己的郵箱上添加別名',
+	oauthDisabled: '該 OAuth 登錄未啟用',
+	resendRecipientLimit: 'Resend 分開發送最多支持100位收件人',
+	resendSeparateAttachments: 'Resend 分開發送不能攜帶附件',
+	noRegKeyCount: '註冊碼剩餘次數不足',
+	notExist: '身份不存在',
 	perms: {
 		"邮件": "郵件",
 		"邮件发送": "郵件發送",

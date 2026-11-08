@@ -228,7 +228,7 @@ const en = {
     backgroundTitle: 'Change background',
     tgBotDesc: 'Forward received emails to a Telegram bot',
     tgBotToken: 'Bot token',
-    toBotTokenDesc: 'Multiple chat_ids separated by commas; "chatid" or "chatid:all" receives all, "chatid:me@example.com|*example.com" only receives the addresses listed',
+    toBotTokenDesc: 'Multiple chat_ids separated by commas; "chatid" or "chatid:all" receives all emails, "chatid:" followed by email addresses separated by vertical bars only receives the listed addresses',
     otherEmailDesc: 'Emails can be forwarded to an external address, but must be verified via Cloudflare.',
     otherEmailInputDesc: 'Separate multiple email addresses with commas',
     forwardingRulesDesc: 'Rule-based forwarding only forwards emails received by the specified address',

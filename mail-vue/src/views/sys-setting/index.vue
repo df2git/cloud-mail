@@ -608,6 +608,7 @@
           <el-input :placeholder="setting.tgBotToken || $t('tgBotToken')" v-model="tgBotToken" @keyup.enter="tgBotSave"></el-input>
           <el-input-tag tag-type="warning" :placeholder="$t('toBotTokenDesc')" v-model="tgChatId"
                         @add-tag="addChatTag"></el-input-tag>
+          <div class="tg-filter-hint">chatid / chatid:all / chatid:me@example.com|*example.com</div>
           <el-input tag-type="warning" :placeholder="$t('customDomainDesc')" v-model="customDomain" @keyup.enter="tgBotSave"></el-input>
           <div class="tg-msg-label">
             <span>{{t('from')}}</span>
@@ -2172,6 +2173,15 @@ function editSetting(settingForm, refreshStatus = true) {
 
   .el-switch {
     align-self: end;
+  }
+
+  .tg-filter-hint {
+    margin: -4px 0 14px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--el-text-color-secondary);
+    user-select: all;
+    word-break: break-all;
   }
 
   > *:nth-child(-n+2) {

@@ -228,7 +228,7 @@ const zh = {
     backgroundTitle: '设置背景',
     tgBotDesc: '可以将接收的邮件转发到Tg机器人',
     tgBotToken: '机器人 token',
-    toBotTokenDesc: '多个 chat_id 用,分开;填 chatid 或 chatid:all 收全部邮件,chatid:me@example.com|*example.com 只收指定地址,支持 * 通配',
+    toBotTokenDesc: '多个 chat_id 用,分开;填 chatid 或 chatid:all 收全部邮件,填 chatid: 加邮箱地址(竖线分隔)只收指定地址,支持 * 通配',
     otherEmailDesc: '可以将邮件转到其他服务商邮箱，需要在cloudflare验证邮箱',
     otherEmailInputDesc: '多个邮箱用, 分开',
     forwardingRulesDesc: '规则转发只会转发设置邮箱所接收的邮件',

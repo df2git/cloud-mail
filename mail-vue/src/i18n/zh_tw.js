@@ -192,7 +192,7 @@ const zh = {
     backgroundTitle: '設置背景',
     tgBotDesc: '可以將接收的郵件轉發到Tg機器人',
     tgBotToken: '機器人 token',
-    toBotTokenDesc: '多個 chat_id 用,分開;填 chatid 或 chatid:all 收全部郵件,chatid:me@example.com|*example.com 只收指定地址,支持 * 通配',
+    toBotTokenDesc: '多個 chat_id 用,分開;填 chatid 或 chatid:all 收全部郵件,填 chatid: 加郵箱地址(豎線分隔)只收指定地址,支持 * 通配',
     otherEmailDesc: '可以將郵件轉到其他服務商郵箱，需要在cloudflare驗證郵箱',
     otherEmailInputDesc: '多個郵箱用, 分開',
     forwardingRulesDesc: '規則轉發只會轉發設置郵箱所接收的郵件',

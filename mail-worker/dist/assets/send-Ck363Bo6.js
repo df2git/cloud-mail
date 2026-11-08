@@ -1,0 +1,1 @@
+import{ax as a}from"./index-C1n78qeg.js";const s=a("send",{state:()=>({deleteId:0,searchParams:{text:"",type:"subject",startDate:"",endDate:""}}),actions:{setSearchParams(e){this.searchParams={...this.searchParams,...e}}}});export{s as u};

@@ -5,7 +5,7 @@ const resendService = {
 
 	async webhooks(c, body) {
 
-		//SMTP2GO webhook
+		// SMTP2GO webhook 使用 event / email_id 字段
 		if (body.event) {
 			return this.smtp2goWebhooks(c, body);
 		}
@@ -82,7 +82,8 @@ const resendService = {
 		const emailRow = await emailService.updateEmailStatus(c, params)
 
 		if (!emailRow) {
-			throw new BizError('更新邮件状态记录失败');
+			console.warn(`smtp2go webhook: unknown email_id ${params.resendEmailId}, event ${body.event}`);
+			return;
 		}
 
 	}

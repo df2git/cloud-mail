@@ -71,6 +71,7 @@ const zh = {
 	oauthDisabled: '該 OAuth 登錄未啟用',
 	resendRecipientLimit: 'Resend 分開發送最多支持100位收件人',
 	resendSeparateAttachments: 'Resend 分開發送不能攜帶附件',
+	recipientLimit: '收件人、副本和密件副本合計不能超過50個',
 	noRegKeyCount: '註冊碼剩餘次數不足',
 	notExist: '身份不存在',
 	perms: {

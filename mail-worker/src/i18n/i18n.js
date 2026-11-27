@@ -5,15 +5,13 @@ import en from './en.js'
 import app from '../hono/hono';
 
 app.use('*', async (c, next) => {
-		const acceptLang = (c.req.header('accept-language') || '').toLowerCase()
-	let lang = 'zh'
+	const acceptLang = (c.req.header('accept-language') || '').toLowerCase()
+	let lang = 'en'
 	if (acceptLang.startsWith('zh-tw') || acceptLang.startsWith('zh-hk') || acceptLang.startsWith('zh-mo')
 		|| acceptLang.startsWith('zh_tw') || acceptLang.startsWith('zh_hk') || acceptLang.startsWith('zh_mo')) {
 		lang = 'zh_tw'
 	} else if (acceptLang.startsWith('zh')) {
 		lang = 'zh'
-	} else {
-		lang = 'en'
 	}
 	i18next.init({
 		lng: lang,
@@ -34,7 +32,7 @@ const resources = {
 };
 
 i18next.init({
-	fallbackLng: 'zh',
+	fallbackLng: 'en',
 	resources,
 });
 

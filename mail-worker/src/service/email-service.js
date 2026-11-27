@@ -23,6 +23,11 @@ import domainUtils from '../utils/domain-uitls';
 import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
+import webhookService from './webhook-service';
+import forwardMime from '../utils/forward-mime';
+import verifyUtils from '../utils/verify-utils';
+import { notifyMailWsFromContext } from '../websocket/notify';
+import proxyService from './proxy-service';
 
 const emailService = {
 
@@ -188,6 +193,26 @@ const emailService = {
 		return list;
 	},
 
+	// 时间范围先通过窄索引筛出 ID，避免逐行读取大字段之后的 create_time。
+	createTimeCondition({ startDate, endDate, userId }) {
+		if (!startDate && !endDate) return null;
+		const parts = [];
+		if (userId) parts.push(sql`e.user_id = ${userId}`);
+		if (startDate) parts.push(sql`e.create_time >= ${startDate}`);
+		if (endDate) parts.push(sql`e.create_time <= ${endDate}`);
+		return sql`${email.emailId} IN (SELECT e.email_id FROM email AS e WHERE ${sql.join(parts, sql` AND `)})`;
+	},
+
+	// 两个地址分别扫描各自的索引；UNION 去重，避免同时命中时重复计数。
+	// 显式指定索引，避免 D1 为 UNION 合并排序而改用表扫描。
+	emailAddressCondition(pattern) {
+		return sql`${email.emailId} IN (
+			SELECT e.email_id FROM email AS e INDEXED BY idx_email_to_email_nocase WHERE e.to_email COLLATE NOCASE LIKE ${pattern}
+			UNION
+			SELECT e.email_id FROM email AS e INDEXED BY idx_email_send_email_nocase WHERE e.send_email COLLATE NOCASE LIKE ${pattern}
+		)`;
+	},
+
 	emailListFilters({
 		userId,
 		accountId,
@@ -243,19 +268,16 @@ const emailService = {
 			}
 		}
 
-		if (startDate) {
-			conditions.push(gte(email.createTime, startDate));
-		}
-
-		if (endDate) {
-			conditions.push(lte(email.createTime, endDate));
-		}
+		const timeCond = this.createTimeCondition({ startDate, endDate, userId });
+		if (timeCond) conditions.push(timeCond);
 
 		return conditions;
 	},
 
-	allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, withCursor = true }) {
-		const conditions = [];
+	allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, withCursor = true, text, searchType, startDate, endDate }) {
+		const conditions = [
+			ne(email.status, emailConst.status.SAVING)
+		];
 
 		if (type === 'send') {
 			conditions.push(eq(email.type, emailConst.type.SEND));
@@ -278,12 +300,7 @@ const emailService = {
 		}
 
 		if (accountEmail) {
-			conditions.push(
-				or(
-					sql`${email.toEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`,
-					sql`${email.sendEmail} COLLATE NOCASE LIKE ${accountEmail + '%'}`,
-				)
-			);
+			conditions.push(this.emailAddressCondition(accountEmail + '%'));
 		}
 
 		if (name) {
@@ -293,6 +310,33 @@ const emailService = {
 		if (subject) {
 			conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${subject + '%'}`);
 		}
+
+		if (text?.trim() && searchType) {
+			const searchText = `%${text.trim()}%`;
+
+			if (searchType === 'subject') {
+				conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${searchText}`);
+			}
+
+			if (searchType === 'sender') {
+				conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${searchText}`);
+			}
+
+			if (searchType === 'senderAddress') {
+				conditions.push(sql`${email.sendEmail} COLLATE NOCASE LIKE ${searchText}`);
+			}
+
+			if (searchType === 'user') {
+				conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${searchText}`);
+			}
+
+			if (searchType === 'account') {
+				conditions.push(this.emailAddressCondition(searchText));
+			}
+		}
+
+		const timeCond = this.createTimeCondition({ startDate, endDate });
+		if (timeCond) conditions.push(timeCond);
 
 		if (withCursor && emailId) {
 			conditions.push(timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId));
@@ -329,6 +373,31 @@ const emailService = {
 		return orm(c).insert(email).values({ ...params }).returning().get();
 	},
 
+	normalizeAddressList(value) {
+		if (value == null || value === '') {
+			return [];
+		}
+		const list = Array.isArray(value) ? value : [value];
+		const result = [];
+		const seen = new Set();
+		for (const item of list) {
+			const address = String(item ?? '').trim();
+			if (!address) {
+				continue;
+			}
+			if (!verifyUtils.isEmail(address)) {
+				throw new BizError(t('notEmail'));
+			}
+			const key = address.toLowerCase();
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			result.push(address);
+		}
+		return result;
+	},
+
 	// 发送入口：公共校验、参数准备、渠道选择和结果汇总。
 	async send(c, params, userId) {
 		let {
@@ -337,16 +406,25 @@ const emailService = {
 			sendType, //发件类型
 			emailId, //邮件id，如果是回复邮件会带
 			receiveEmail, //收件人邮箱
-			cc = [], //抄送邮箱
-			bcc = [], //密件抄送邮箱
+			ccEmail, //抄送
+			bccEmail, //密送
 			text, //邮件纯文本
 			content, //邮件内容
 			subject, //邮件标题
 			attachments = [] //附件
 		} = params;
 
+		ccEmail = this.normalizeAddressList(ccEmail);
+		bccEmail = this.normalizeAddressList(bccEmail);
+		const takenAddress = new Set((receiveEmail || []).map(item => String(item).toLowerCase()));
+		ccEmail = ccEmail.filter(address => !takenAddress.has(address.toLowerCase()));
+		ccEmail.forEach(address => takenAddress.add(address.toLowerCase()));
+		bccEmail = bccEmail.filter(address => !takenAddress.has(address.toLowerCase()));
+
 		const { resendTokens, smtp2goTokens, sendProvider, r2Domain, send, domainList } = await settingService.query(c);
 
+		// 引用正文里的 /proxy?url= 还原成原始外链再发。
+		content = proxyService.restoreHtml(content);
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
 
 		//判断是否关闭发件功能
@@ -357,9 +435,17 @@ const emailService = {
 		const userRow = await userService.selectById(c, userId);
 		const roleRow = await roleService.selectById(c, userRow.type);
 
+		// 分开发送不带抄送和密送。
+		const separate = params.manyType === 'divide';
+		if (separate) {
+			ccEmail = [];
+			bccEmail = [];
+		}
+		const copyCount = ccEmail.length + bccEmail.length;
+		const quotaCount = receiveEmail.length + copyCount;
+
 		//判断接收方是不是全部为站内邮箱
-		const allRecipients = [...new Set([...receiveEmail, ...cc, ...bcc])];
-		const allInternal = allRecipients.every(email => {
+		const allInternal = [...receiveEmail, ...ccEmail, ...bccEmail].every(email => {
 			const domain = '@' + emailUtils.getDomain(email);
 			return domainList.includes(domain);
 		});
@@ -386,7 +472,7 @@ const emailService = {
 				if (roleRow.sendType === 'count') throw new BizError(t('totalSendLimit'), 403);
 			}
 
-			if (userRow.sendCount + allRecipients.length > roleRow.sendCount) {
+			if (userRow.sendCount + quotaCount > roleRow.sendCount) {
 				if (roleRow.sendType === 'day') throw new BizError(t('daySendLack'), 403);
 				if (roleRow.sendType === 'count') throw new BizError(t('totalSendLack'), 403);
 			}
@@ -454,8 +540,8 @@ const emailService = {
 			name,
 			accountEmail: accountRow.email,
 			receiveEmail,
-			cc,
-			bcc,
+			ccEmail,
+			bccEmail,
 			subject,
 			text,
 			html,
@@ -471,21 +557,27 @@ const emailService = {
 			throw new BizError(t('attLimit'));
 		}
 
-		const separate = params.manyType === 'divide';
+		if (!allInternal) {
+			const perMessageCount = (separate ? 1 : receiveEmail.length) + copyCount;
+			if (perMessageCount > 50) {
+				throw new BizError(t('recipientLimit'));
+			}
+		}
+
 		// sendParams 用于渠道请求，saveParams 保留保存记录所需的账号、权限和附件数据。
 		const context = {
-			separate, allInternal, useCloudflareEmail, resendToken, smtp2goToken, sendProviderType,
-			sendParams, allRecipients,
+			separate, allInternal, useCloudflareEmail, resendToken, smtp2goToken, sendProviderType, sendParams,
 			saveParams: {
 				accountId, userId, name, subject, text, html,
 				sendEmail: accountRow.email,
+				ccEmail, bccEmail,
 				messageId: emailRow.messageId,
-				sendType, useCloudflareEmail, roleRow, r2Domain,
-				imageDataList, attachments, cc, bcc, allRecipients
+				sendType, useCloudflareEmail, sendProviderType, allInternal, roleRow, r2Domain,
+				imageDataList, attachments
 			}
 		};
 
-		// 全部站内收件人走本地投递；存在站外收件人时按设置的发信服务发送（Cloudflare Email / SMTP2GO / Resend）。
+		// 全部站内收件人走本地投递；站外收件人按所选发信服务发送。
 		let deliveries;
 		if (allInternal) {
 			deliveries = this.sendInternal(c, context);
@@ -533,7 +625,9 @@ const emailService = {
 			: [sendParams.receiveEmail];
 		for (const receiveEmail of recipientGroups) {
 			const emailResult = await this.saveSentEmail(c, { ...saveParams, receiveEmail });
-			await this.HandleOnSiteEmail(c, receiveEmail, emailResult, emailResult.attList);
+			const inboxAddresses = [...receiveEmail, ...sendParams.ccEmail, ...sendParams.bccEmail];
+			const emailRowList = await this.HandleOnSiteEmail(c, inboxAddresses, emailResult, emailResult.attList);
+			await this.forwardOnSiteEmail(c, emailRowList, { sendParams: { ...sendParams, receiveEmail } });
 			yield { emails: [emailResult] };
 		}
 	},
@@ -571,7 +665,6 @@ const emailService = {
 				result = await this.sendBySmtp2go(smtp2goToken, { ...sendParams, receiveEmail });
 			} catch (error) {
 				if (!separate) throw error;
-				// 分开发送遇到渠道错误即停止，已成功的记录由入口汇总。
 				yield { error: { message: error.message } };
 				return;
 			}
@@ -629,8 +722,9 @@ const emailService = {
 	async saveSentEmail(c, params) {
 		const {
 			accountId, userId, name, subject, text, html, sendEmail, receiveEmail,
-			providerId, messageId, sendType, useCloudflareEmail,
-			roleRow, r2Domain, attachments, cc, bcc, allRecipients
+			ccEmail = [], bccEmail = [],
+			providerId, messageId, sendType, useCloudflareEmail, sendProviderType, allInternal,
+			roleRow, r2Domain, attachments
 		} = params;
 		const imageDataList = params.imageDataList.map(item => ({
 			...item, contentId: `<${item.contentId.replace(/^<|>$/g, '')}>`
@@ -638,19 +732,20 @@ const emailService = {
 		const emailData = {
 			sendEmail, name, subject, text, accountId, userId,
 			content: this.imgReplace(html, imageDataList, r2Domain),
-			status: useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
+			status: (allInternal || sendProviderType === 'cloudflare') ? emailConst.status.DELIVERED : emailConst.status.SENT,
 			type: emailConst.type.SEND,
 			resendEmailId: providerId,
 			recipient: JSON.stringify(receiveEmail.map(address => ({ address, name: '' }))),
-			cc: JSON.stringify(cc ?? []),
-			bcc: JSON.stringify(bcc ?? [])
+			cc: JSON.stringify(ccEmail.map(address => ({ address, name: '' }))),
+			bcc: JSON.stringify(bccEmail.map(address => ({ address, name: '' })))
 		};
 		if (sendType === 'reply') {
 			emailData.inReplyTo = messageId;
 			emailData.relation = messageId;
 		}
+		const deliveredCount = receiveEmail.length + ccEmail.length + bccEmail.length;
 		if (roleRow.sendCount && roleRow.sendType !== 'internal') {
-			await userService.incrUserSendCount(c, allRecipients.length, userId);
+			await userService.incrUserSendCount(c, deliveredCount, userId);
 		}
 
 		const emailResult = await orm(c).insert(email).values(emailData).returning().get();
@@ -671,9 +766,9 @@ const emailService = {
 
 		//记录每天发件次数统计
 		if (!daySendTotal) {
-			await c.env.kv.put(kvConst.SEND_DAY_COUNT + dateStr, JSON.stringify(allRecipients.length), { expirationTtl: 60 * 60 * 24 });
+			await c.env.kv.put(kvConst.SEND_DAY_COUNT + dateStr, JSON.stringify(deliveredCount), { expirationTtl: 60 * 60 * 24 });
 		} else  {
-			daySendTotal = Number(daySendTotal) + allRecipients.length
+			daySendTotal = Number(daySendTotal) + deliveredCount
 			await c.env.kv.put(kvConst.SEND_DAY_COUNT + dateStr, JSON.stringify(daySendTotal), { expirationTtl: 60 * 60 * 24 });
 		}
 
@@ -696,7 +791,10 @@ const emailService = {
 			};
 		}
 		return resend.batch.send(params.receiveEmail.map(address => ({
-			...sendForm, to: [address]
+			...sendForm,
+			to: [address],
+			...(params.ccEmail.length > 0 ? { cc: params.ccEmail } : {}),
+			...(params.bccEmail.length > 0 ? { bcc: params.bccEmail } : {})
 		})), { batchValidation: 'strict' });
 	},
 
@@ -707,12 +805,12 @@ const emailService = {
 			subject: params.subject
 		};
 
-		if (params.cc?.length > 0) {
-			sendForm.cc = [...params.cc];
+		if (params.ccEmail.length > 0) {
+			sendForm.cc = [...params.ccEmail];
 		}
 
-		if (params.bcc?.length > 0) {
-			sendForm.bcc = [...params.bcc];
+		if (params.bccEmail.length > 0) {
+			sendForm.bcc = [...params.bccEmail];
 		}
 
 		if (params.text) {
@@ -756,12 +854,12 @@ const emailService = {
 			attachments: await this.toResendAttachments(params.attachments)
 		};
 
-		if (params.cc?.length > 0) {
-			sendForm.cc = [...params.cc];
+		if (params.ccEmail.length > 0) {
+			sendForm.cc = [...params.ccEmail];
 		}
 
-		if (params.bcc?.length > 0) {
-			sendForm.bcc = [...params.bcc];
+		if (params.bccEmail.length > 0) {
+			sendForm.bcc = [...params.bccEmail];
 		}
 
 		if (params.sendType === 'reply') {
@@ -784,12 +882,12 @@ const emailService = {
 			inlines: await this.toSmtp2goInlines(params.attachments)
 		};
 
-		if (params.cc?.length > 0) {
-			sendForm.cc = [...params.cc];
+		if (params.ccEmail?.length > 0) {
+			sendForm.cc = [...params.ccEmail];
 		}
 
-		if (params.bcc?.length > 0) {
-			sendForm.bcc = [...params.bcc];
+		if (params.bccEmail?.length > 0) {
+			sendForm.bcc = [...params.bccEmail];
 		}
 
 		if (params.text) {
@@ -800,7 +898,7 @@ const emailService = {
 			sendForm.html_body = params.html;
 		}
 
-		if (params.sendType === 'reply') {
+		if (params.sendType === 'reply' && params.messageId) {
 			sendForm.custom_headers = [
 				{ header: 'in-reply-to', value: params.messageId },
 				{ header: 'references', value: params.messageId }
@@ -846,7 +944,7 @@ const emailService = {
 			return { data: null, error: { message: failures.join('; ') || 'SMTP2GO send failed' } };
 		}
 
-		return { data: { id: json.data.email_id }, error: null };
+		return { data: { id: json.data?.email_id }, error: null };
 	},
 
 	async toSmtp2goAttachments(attachments = []) {
@@ -1034,6 +1132,7 @@ const emailService = {
 
 			//把发件人邮件改成收件
 			const emailValues = {...sendEmailData}
+			emailValues.bcc = '[]';
 			emailValues.status = emailConst.status.RECEIVE;
 			emailValues.type = emailConst.type.RECEIVE;
 			emailValues.toEmail = email;
@@ -1098,10 +1197,14 @@ const emailService = {
 
 		//保存邮件
 		const receiveEmailList = emailDataList.filter(emailRow => emailRow.status === emailConst.status.RECEIVE || emailRow.status === emailConst.status.NOONE);
+		const emailRowList = [];
 
 		for (const emailData of receiveEmailList) {
 
 			const emailRow = await orm(c).insert(email).values(emailData).returning().get();
+			emailRowList.push(emailRow);
+			// 站内信同样：有 userId 推收件箱，无人收件只推全部邮件。
+			notifyMailWsFromContext(c, emailRow);
 
 			//设置附件保存
 			for (const attRow of attList) {
@@ -1128,6 +1231,71 @@ const emailService = {
 		}
 
 		await orm(c).update(email).set({ status, message: message }).where(eq(email.emailId, sendEmailData.emailId)).run();
+
+		return emailRowList;
+	},
+
+	// 规则转发：只按所属用户登录邮箱匹配，名单仍存在 rule_email。
+	matchForwardRule({ ruleEmail, userEmail }) {
+		const users = String(ruleEmail || '').split(',').map(item => item.trim().toLowerCase()).filter(Boolean);
+		return !!(userEmail && users.includes(String(userEmail).toLowerCase()));
+	},
+
+	//站内邮件不经过 email 事件，在这里按转发规则推送
+	async forwardOnSiteEmail(c, emailRowList, { sendParams }) {
+
+		const { tgBotStatus, tgChatId, forwardStatus, forwardEmail, webhookStatus, webhookUrl, webhookRetry, webhookSecret, ruleEmail, ruleType } = await settingService.query(c);
+
+		if (ruleType === settingConst.ruleType.RULE) {
+			const userIds = [...new Set(emailRowList.map(row => row.userId).filter(Boolean))];
+			const userRows = userIds.length
+				? await orm(c).select({ userId: user.userId, email: user.email }).from(user).where(inArray(user.userId, userIds)).all()
+				: [];
+			const userEmailById = Object.fromEntries(userRows.map(row => [row.userId, row.email]));
+			emailRowList = emailRowList.filter(emailRow => this.matchForwardRule({
+				ruleEmail,
+				userEmail: userEmailById[emailRow.userId]
+			}));
+		}
+
+		for (const emailRow of emailRowList) {
+
+			//转发到TG
+			if (tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
+				await telegramService.sendEmailToBot(c, emailRow);
+			}
+
+			//转发到 Webhook
+			if (webhookStatus === settingConst.webhookStatus.OPEN && webhookUrl) {
+				await webhookService.sendEmail(c, emailRow, webhookUrl, webhookRetry, webhookSecret);
+			}
+
+		}
+
+		//转发到其他邮箱。发件人用站内实际发件人，信头收件人保留原收件人，信封送到已验证地址。
+		if (forwardStatus === settingConst.forwardStatus.OPEN && forwardEmail && emailRowList.length > 0) {
+
+			const addresses = forwardEmail.split(',').map(address => address.trim()).filter(Boolean);
+			const params = {
+				...sendParams,
+				attachments: await this.toCloudflareAttachments(sendParams.attachments || []),
+				receiveEmail: emailRowList.map(row => ({ address: row.toEmail, name: row.toName || '' })).filter(item => item.address)
+			};
+
+			await Promise.all(addresses.map(async address => {
+
+				try {
+					const result = await forwardMime.send(c.env.forward, params, address);
+					if (result?.error) {
+						console.error(`转发邮箱 ${address} 失败：`, result.error);
+					}
+				} catch (e) {
+					console.error(`转发邮箱 ${address} 失败：`, e);
+				}
+
+			}));
+
+		}
 
 	},
 
@@ -1205,7 +1373,7 @@ const emailService = {
 					eq(email.type, emailConst.type.RECEIVE)
 				))
 			.orderBy(desc(email.emailId))
-			.limit(20);
+			.limit(50);
 
 		await this.emailAddAtt(c, list);
 		for (const item of list) {
@@ -1254,7 +1422,7 @@ const emailService = {
 
 	async allList(c, params) {
 
-		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort, full } = params;
+		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort, full, text, searchType, startDate, endDate } = params;
 
 		size = Number(size);
 		emailId = Number(emailId) || 0;
@@ -1279,24 +1447,26 @@ const emailService = {
 
 		full = full === 1;
 
-		const filters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort });
-		const countFilters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, withCursor: false });
+		const filters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, text, searchType, startDate, endDate });
+		const countFilters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, text, searchType, startDate, endDate, withCursor: false });
+		const searchUser = Boolean(text?.trim() && searchType === 'user');
 		const columns = full ? emailListColumns : emailBriefColumns;
 
+		const listWhere = and(...filters);
+		const countWhere = and(...countFilters);
 		const query = orm(c).select({ ...columns, userEmail: user.email })
 			.from(email)
-			.leftJoin(user, eq(email.userId, user.userId))
-			.where(and(...filters));
+			.leftJoin(user, eq(email.userId, user.userId));
+		if (listWhere) query.where(listWhere);
 
 		// count 不搜用户时无需 join user
-		const queryCount = userEmail
+		const queryCount = userEmail || searchUser
 			? orm(c).select({ total: count() })
 				.from(email)
 				.leftJoin(user, eq(email.userId, user.userId))
-				.where(and(...countFilters))
 			: orm(c).select({ total: count() })
-				.from(email)
-				.where(and(...countFilters));
+				.from(email);
+		if (countWhere) queryCount.where(countWhere);
 
 		if (timeSort) {
 			query.orderBy(asc(email.emailId));
@@ -1342,10 +1512,11 @@ const emailService = {
 			.where(
 				and(
 					gt(email.emailId, emailId),
-					eq(email.type, emailConst.type.RECEIVE)
+					eq(email.type, emailConst.type.RECEIVE),
+					ne(email.status, emailConst.status.SAVING)
 				))
 			.orderBy(desc(email.emailId))
-			.limit(20);
+			.limit(50);
 
 		await this.emailAddAtt(c, list);
 		for (const item of list) {
@@ -1367,6 +1538,9 @@ const emailService = {
 				emailRow.attList = atts;
 			});
 		}
+
+		// 完整邮件查询：给附件后，把正文外链图改成 /proxy?url=。
+		await proxyService.rewriteList(c, list);
 	},
 
 	async restoreByUserId(c, userId) {

@@ -11,8 +11,8 @@ import jwtUtils from '../utils/jwt-utils';
 import emailMsgTemplate from '../template/email-msg';
 import emailTextTemplate from '../template/email-text';
 import emailHtmlTemplate from '../template/email-html';
-import verifyUtils from '../utils/verify-utils';
 import domainUtils from "../utils/domain-uitls";
+import proxyService from './proxy-service';
 
 const telegramService = {
 
@@ -31,8 +31,9 @@ const telegramService = {
 		if (emailRow) {
 
 			if (emailRow.content) {
-				const { r2Domain } = await settingService.query(c);
-				return emailHtmlTemplate(emailRow.content || '', r2Domain)
+				// Telegram 网页预览：外链图改成 /proxy?url=，避免暴露打开者 IP。
+				const html = await proxyService.rewriteHtml(c, emailRow.content);
+				return emailHtmlTemplate(html || '')
 			} else {
 				return emailTextTemplate(emailRow.text || '')
 			}
@@ -44,49 +45,37 @@ const telegramService = {
 	},
 
 	parseTargets(str) {
-
-		return str.split(',').map(item => item.trim()).filter(item => item).map(item => {
-
+		return String(str || '').split(',').map(item => item.trim()).filter(item => item).map(item => {
 			let chatId = item;
 			let filters = [];
-
 			const index = item.indexOf(':');
-
 			if (index > -1) {
 				chatId = item.slice(0, index);
-				filters = item.slice(index + 1).split('|').map(filter => filter.trim().toLowerCase()).filter(filter => filter && filter !== 'all');
+				filters = item.slice(index + 1).split('|')
+					.map(filter => filter.trim().toLowerCase())
+					.filter(filter => filter && filter !== 'all');
 			}
-
 			return { chatId, filters };
-
 		});
-
 	},
 
 	isMatch(filters, addresses) {
-
 		if (filters.length === 0) return true;
-
-		return filters.some(raw =>
-			addresses.some(address => {
-				const filter = String(raw).toLowerCase();
-				if (filter.startsWith('*')) return address.endsWith(filter.slice(1));
-				if (filter.endsWith('*')) return address.startsWith(filter.slice(0, -1));
-				return address === filter;
-			})
-		);
-
+		return filters.some(raw => addresses.some(address => {
+			const filter = String(raw).toLowerCase();
+			if (filter.startsWith('*')) return address.endsWith(filter.slice(1));
+			if (filter.endsWith('*')) return address.startsWith(filter.slice(0, -1));
+			return address === filter;
+		}));
 	},
 
 	async sendEmailToBot(c, email) {
 
 		const { tgBotToken, tgChatId, customDomain, tgMsgTo, tgMsgFrom, tgMsgText } = await settingService.query(c);
 
-		//chat_id 支持三种写法: `chatid` 收全部 / `chatid:all` 收全部 / `chatid:pattern1|pattern2` 只收匹配收件地址,pattern 支持 * 通配(如 *@example.com)
+		// chat_id 可附加地址过滤：`chatid` / `chatid:all` 收全部，`chatid:addr1|addr2` 只收指定地址，支持 * 通配
 		const targets = this.parseTargets(tgChatId);
-
 		const receiveAddresses = new Set([(email.toEmail || '').toLowerCase()]);
-
 		try {
 			const recipients = JSON.parse(email.recipient || '[]');
 			recipients.forEach(item => {
@@ -94,11 +83,9 @@ const telegramService = {
 				if (address) receiveAddresses.add(String(address).toLowerCase());
 			});
 		} catch (e) {
-			console.error('解析 TG 通知收件人异常:', e);
+			console.error('parse telegram recipient failed:', e.message);
 		}
-
 		const receivers = targets.filter(target => this.isMatch(target.filters, Array.from(receiveAddresses)));
-
 		if (receivers.length === 0) return;
 
 		const jwtToken = await jwtUtils.generateToken(c, { emailId: email.emailId })
